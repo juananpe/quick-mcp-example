@@ -51,4 +51,4 @@ venv.bak/*
 .pytest_cache/
 
 # Dev stuff
-notes.txt
+testing/*
