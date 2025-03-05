@@ -20,6 +20,9 @@ from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 import glob
 from importlib import metadata
 
+from langchain_community.document_loaders import PyPDFLoader
+
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("document-search-mcp")
@@ -293,10 +296,7 @@ async def handle_read_resource(uri: str):
         
         document_name = path_parts[3]
         
-        try:
-            # Import required library
-            from langchain_community.document_loaders import PyPDFLoader
-            
+        try:            
             # Construct path - assuming documents are in ./testing/
             path = f"./testing/{document_name}"
             if not path.endswith('.pdf'):
@@ -311,7 +311,7 @@ async def handle_read_resource(uri: str):
             for i, page in enumerate(pages):
                 full_text += f"\n\n--- Page {i+1} ---\n\n"
                 full_text += page.page_content
-                
+            logger.info(f"Loaded document {document_name} with {len(pages)} pages. Preview: {full_text[:200]}...")
             return full_text
         except Exception as e:
             error_message = f"Error loading document: {str(e)}"

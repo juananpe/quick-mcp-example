@@ -150,21 +150,19 @@ class MCPClient:
             
             if not result:
                 return "No content found for this resource."
-                
-            # Handle ReadResourceResult object properly
-            if hasattr(result, "contents") and result.contents:
-                # Access the first content item if it exists
-                content = result.contents[0]
-                if hasattr(content, "text"):
-                    return content.text
-                else:
-                    return str(content)
+            
+            # According to MCP documentation, the resource content should be returned as a string
+            # Just return the result directly, handling both string and object responses
+            if isinstance(result, str):
+                return result
             else:
+                # For backward compatibility, still handle object responses if they come through
                 return str(result)
         except Exception as e:
             error_msg = f"Error reading resource {uri}: {str(e)}"
             logger.error(error_msg)
             return error_msg
+
             
     async def list_prompts(self):
         """List available prompts from the MCP server"""
@@ -292,11 +290,11 @@ class MCPClient:
                 try:
                     result = await self.session.call_tool(tool_name, tool_args)
                     tool_content = result.content if hasattr(result, 'content') else str(result)
-                    tool_results.append({"call": tool_name, "result": tool_content})
+                    tool_results.append({"call": tool_name, "result": tool_content[0].text})
                     final_text.append(f"\n[Calling tool {tool_name} with args {tool_args}]")
                     
                     if self.debug:
-                        result_preview = tool_content[:200] + "..." if len(tool_content) > 200 else tool_content
+                        result_preview = tool_content[0].text[:200] + "..." if len(tool_content[0].text) > 200 else tool_content[0].text
                         logger.info(f"Tool result preview: {result_preview}")
                     
                     # Add the tool result to the conversation
