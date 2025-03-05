@@ -37,6 +37,9 @@ class MCPClient:
         self.exit_stack = AsyncExitStack()
         self.debug = debug
         
+        # Message history tracking
+        self.message_history = []
+        
         # Initialize OpenAI client if API key is available
         try:
             self.openai = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -116,6 +119,25 @@ class MCPClient:
             logger.info(f"- Resources: {len(self.available_resources)}")
             logger.info(f"- Prompts: {len(self.available_prompts)}")
 
+    async def add_to_history(self, role: str, content: str, metadata: Dict[str, Any] = None):
+        """Add a message to the history
+        
+        Args:
+            role: The role of the message sender (user, assistant, system, resource)
+            content: The message content
+            metadata: Optional metadata about the message
+        """
+        message = {
+            "role": role,
+            "content": content,
+            "timestamp": asyncio.get_event_loop().time(),
+            "metadata": metadata or {}
+        }
+        self.message_history.append(message)
+        
+        if self.debug:
+            logger.info(f"Added message to history: {role} - {content[:100]}...")
+
     async def list_resources(self):
         """List available resources from the MCP server"""
         if not self.session:
@@ -149,18 +171,20 @@ class MCPClient:
             result = await self.session.read_resource(uri)
             
             if not result:
-                return "No content found for this resource."
-            
-            # According to MCP documentation, the resource content should be returned as a string
-            # Just return the result directly, handling both string and object responses
-            if isinstance(result, str):
-                return result
+                content = "No content found for this resource."
             else:
-                # For backward compatibility, still handle object responses if they come through
-                return str(result)
+                # Handle both string and object responses
+                content = result if isinstance(result, str) else str(result)
+            
+            # Add resource content to history as a user message
+            resource_message = f"Resource content from {uri}:\n\n{content}"
+            await self.add_to_history("user", resource_message, {"resource_uri": uri})
+            
+            return content
         except Exception as e:
             error_msg = f"Error reading resource {uri}: {str(e)}"
             logger.error(error_msg)
+            await self.add_to_history("error", error_msg, {"uri": uri})
             return error_msg
 
             
@@ -212,15 +236,23 @@ class MCPClient:
             The response from the AI after processing the query
         """
         if not self.openai:
-            return "OpenAI client not initialized. Please set OPENAI_API_KEY environment variable."
+            error_msg = "OpenAI client not initialized. Please set OPENAI_API_KEY environment variable."
+            await self.add_to_history("error", error_msg)
+            return error_msg
             
-        messages = [
-            {
-                "role": "user",
-                "content": query
-            }
-        ]
-
+        # Add user query to history
+        await self.add_to_history("user", query)
+        
+        # Convert message history to OpenAI format
+        messages = []
+        for msg in self.message_history:
+            if msg['role'] in ['user', 'assistant', 'system']:
+                messages.append({
+                    "role": msg['role'],
+                    "content": msg['content']
+                })
+            # Skip other message types in the OpenAI context
+        
         # Make sure we have the latest tools
         if not self.available_tools:
             await self.refresh_capabilities()
@@ -237,6 +269,7 @@ class MCPClient:
         if self.debug:
             tool_names = [tool["function"]["name"] for tool in available_tools]
             logger.info(f"Available tools for query: {tool_names}")
+            logger.info(f"Sending {len(messages)} messages to OpenAI")
 
         # Initial OpenAI API call
         try:
@@ -249,6 +282,7 @@ class MCPClient:
         except Exception as e:
             error_msg = f"Error calling OpenAI API: {str(e)}"
             logger.error(error_msg)
+            await self.add_to_history("error", error_msg)
             return error_msg
 
         # Process response and handle tool calls
@@ -256,7 +290,11 @@ class MCPClient:
         final_text = []
         
         assistant_message = response.choices[0].message
-        final_text.append(assistant_message.content or "")
+        initial_response = assistant_message.content or ""
+        
+        # Add initial assistant response to history
+        await self.add_to_history("assistant", initial_response)
+        final_text.append(initial_response)
         
         if assistant_message.tool_calls:
             if self.debug:
@@ -303,6 +341,7 @@ class MCPClient:
                         "tool_call_id": tool_call.id,
                         "content": tool_content
                     })
+                    await self.add_to_history("tool", tool_content[0].text, {"tool": tool_name, "args": tool_args})
                 except Exception as e:
                     error_msg = f"Error executing tool {tool_name}: {str(e)}"
                     logger.error(error_msg)
@@ -311,6 +350,7 @@ class MCPClient:
                         "tool_call_id": tool_call.id,
                         "content": error_msg
                     })
+                    await self.add_to_history("error", error_msg, {"tool": tool_name})
                     final_text.append(f"\n[Error executing tool {tool_name}: {str(e)}]")
             
             if self.debug:
@@ -323,10 +363,13 @@ class MCPClient:
                     messages=messages
                 )
                 
-                final_text.append("\n" + (second_response.choices[0].message.content or ""))
+                response_content = second_response.choices[0].message.content or ""
+                await self.add_to_history("assistant", response_content)
+                final_text.append("\n" + response_content)
             except Exception as e:
                 error_msg = f"Error getting final response from OpenAI: {str(e)}"
                 logger.error(error_msg)
+                await self.add_to_history("error", error_msg)
                 final_text.append(f"\n[Error: {error_msg}]")
 
         return "\n".join(final_text)
@@ -344,6 +387,7 @@ class MCPClient:
         print("  /prompts - List available prompts")
         print("  /prompt <n> <arg1=value1> <arg2=value2> - Use a specific prompt")
         print("  /tools - List available tools")
+        print("  /history - Show message history")
         print("  /quit - Exit the client")
         print(f"{'='*50}")
         
@@ -362,6 +406,17 @@ class MCPClient:
                     await self.refresh_capabilities()
                     print("\nServer capabilities refreshed")
                     continue
+                elif query.lower() == '/history':
+                    print("\nMessage History:")
+                    print("================")
+                    for idx, msg in enumerate(self.message_history, 1):
+                        metadata = ""
+                        if msg['metadata']:
+                            metadata = str(msg['metadata'])
+                        print(f"\n[{idx}] {msg['role'].upper()} {metadata}")
+                        content_preview = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
+                        print(f"{content_preview}")
+                    continue
                 elif query.lower() == '/resources':
                     resources = await self.list_resources()
                     print("\nAvailable Resources:")
@@ -379,6 +434,7 @@ class MCPClient:
                     # Print first 500 chars with option to see more
                     if len(content) > 500:
                         print(content[:500] + "...")
+                        print("(Resource content truncated for display purposes but full content is included in message history)")
                     else:
                         print(content)
                     continue
@@ -417,8 +473,23 @@ class MCPClient:
                         
                     messages = prompt_result.messages
                     
-                    # Convert messages to OpenAI format
+                    # Convert messages to OpenAI format and include relevant history
                     openai_messages = []
+                    
+                    # First add the last few user messages to provide document context
+                    # (up to 5 recent messages but skip system messages and error messages)
+                    recent_messages = []
+                    for msg in reversed(self.message_history[-10:]):
+                        if msg['role'] in ['user', 'assistant'] and len(recent_messages) < 5:
+                            recent_messages.append({
+                                "role": msg['role'],
+                                "content": msg['content']
+                            })
+                    
+                    # Add recent messages in correct order (oldest first)
+                    openai_messages.extend(reversed(recent_messages))
+                    
+                    # Then add the prompt messages
                     for msg in messages:
                         content = msg.content.text if hasattr(msg.content, 'text') else str(msg.content)
                         openai_messages.append({
@@ -433,10 +504,19 @@ class MCPClient:
                             messages=openai_messages
                         )
                         
+                        response_content = response.choices[0].message.content
+                        # Add the prompt and response to conversation history
+                        for msg in messages:
+                            content = msg.content.text if hasattr(msg.content, 'text') else str(msg.content)
+                            await self.add_to_history(msg.role, content)
+                        
+                        await self.add_to_history("assistant", response_content)
+                        
                         print("\nResponse:")
-                        print(response.choices[0].message.content)
+                        print(response_content)
                     except Exception as e:
-                        print(f"\nError processing prompt with OpenAI: {str(e)}")
+                        error_msg = f"\nError processing prompt with OpenAI: {str(e)}"
+                        print(error_msg)
                     continue
                 elif query.lower() == '/tools':
                     print("\nAvailable Tools:")

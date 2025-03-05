@@ -19,6 +19,8 @@ import chromadb
 from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 import glob
 from importlib import metadata
+import time
+import re
 
 from langchain_community.document_loaders import PyPDFLoader
 
@@ -367,7 +369,7 @@ async def handle_list_prompts() -> list[Prompt]:
                 PromptArgument(
                     name="query",
                     description="What aspect to analyze (e.g., 'main themes', 'methodology')",
-                    required=False
+                    required=True
                 )
             ]
         ),
@@ -378,7 +380,7 @@ async def handle_list_prompts() -> list[Prompt]:
                 PromptArgument(
                     name="info_type",
                     description="Type of information to extract (definitions, people, statistics, processes, arguments)",
-                    required=False
+                    required=True
                 )
             ]
         )
@@ -388,17 +390,22 @@ async def handle_list_prompts() -> list[Prompt]:
 @server.get_prompt()
 async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:
     """Generate a prompt based on the requested type"""
+    # Simple argument handling
+    if arguments is None:
+        arguments = {}
+        
     if name == "deep_analysis":
+        # Get query with a fallback default
         query = arguments.get("query", "main themes")
         
         return GetPromptResult(
             description=f"Deep analysis focusing on {query}",
             messages=[
                 PromptMessage(
-                    role="system", 
+                    role="assistant", 
                     content=TextContent(
                         type="text",
-                        text="You are a document analysis expert specializing in identifying key themes, arguments, and evidence in academic and technical documents."
+                        text="I am a document analysis expert specializing in identifying key themes, arguments, and evidence in academic and technical documents."
                     )
                 ),
                 PromptMessage(
@@ -423,6 +430,7 @@ Format your analysis in a well-structured manner with clear headings and concise
         )
     
     elif name == "extract_key_information":
+        # Get info_type with a fallback default
         info_type = arguments.get("info_type", "definitions")
         
         info_instructions = {
@@ -442,10 +450,10 @@ Format your analysis in a well-structured manner with clear headings and concise
             description=f"Extracting {info_type} from document",
             messages=[
                 PromptMessage(
-                    role="system", 
+                    role="assistant", 
                     content=TextContent(
                         type="text",
-                        text="You are a precise information extraction specialist with expertise in technical documents."
+                        text="I am a precise information extraction specialist with expertise in technical documents."
                     )
                 ),
                 PromptMessage(
