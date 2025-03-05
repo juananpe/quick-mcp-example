@@ -385,9 +385,8 @@ class MCPClient:
         print("  /resources - List available resources")
         print("  /resource <uri> - Read a specific resource")
         print("  /prompts - List available prompts")
-        print("  /prompt <n> <arg1=value1> <arg2=value2> - Use a specific prompt")
+        print("  /prompt <n> <sentence> - Use a specific prompt with a sentence as the argument")
         print("  /tools - List available tools")
-        print("  /history - Show message history")
         print("  /quit - Exit the client")
         print(f"{'='*50}")
         
@@ -405,17 +404,6 @@ class MCPClient:
                 elif query.lower() == '/refresh':
                     await self.refresh_capabilities()
                     print("\nServer capabilities refreshed")
-                    continue
-                elif query.lower() == '/history':
-                    print("\nMessage History:")
-                    print("================")
-                    for idx, msg in enumerate(self.message_history, 1):
-                        metadata = ""
-                        if msg['metadata']:
-                            metadata = str(msg['metadata'])
-                        print(f"\n[{idx}] {msg['role'].upper()} {metadata}")
-                        content_preview = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
-                        print(f"{content_preview}")
                     continue
                 elif query.lower() == '/resources':
                     resources = await self.list_resources()
@@ -449,8 +437,8 @@ class MCPClient:
                             print(f"    Arguments: {', '.join(arg.name for arg in prompt.arguments)}")
                     continue
                 elif query.lower().startswith('/prompt '):
-                    # Parse: /prompt name arg1=value1 arg2=value2
-                    parts = query[8:].strip().split()
+                    # Parse: /prompt name sentence of arguments
+                    parts = query[8:].strip().split(maxsplit=1)
                     if not parts:
                         print("Error: Prompt name required")
                         continue
@@ -458,10 +446,23 @@ class MCPClient:
                     name = parts[0]
                     arguments = {}
                     
-                    for part in parts[1:]:
-                        if '=' in part:
-                            key, value = part.split('=', 1)
-                            arguments[key] = value
+                    # If there are arguments (anything after the prompt name)
+                    if len(parts) > 1:
+                        arg_text = parts[1]
+                        
+                        # Get the prompt to check its expected arguments
+                        prompt_info = None
+                        for prompt in self.available_prompts:
+                            if prompt.name == name:
+                                prompt_info = prompt
+                                break
+                                
+                        if prompt_info and prompt_info.arguments and len(prompt_info.arguments) > 0:
+                            # Use the first argument name as the key for the entire sentence
+                            arguments[prompt_info.arguments[0].name] = arg_text
+                        else:
+                            # Default to using "text" as the argument name if no prompt info available
+                            arguments["text"] = arg_text
                     
                     print(f"\nGetting prompt template: {name}")
                     prompt_result = await self.get_prompt(name, arguments)

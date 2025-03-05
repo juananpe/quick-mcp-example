@@ -107,14 +107,6 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {}
             }
         ),
-        Tool(
-            name="diagnostic_info",
-            description="Get diagnostic information about the ChromaDB setup",
-            inputSchema={
-                "type": "object",
-                "properties": {}
-            }
-        )
     ]
 
 
@@ -179,35 +171,6 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             error_message = f"Error getting collection info: {str(e)}"
             logger.error(error_message)
             return [TextContent(type="text", text=error_message)]
-    
-    elif name == "diagnostic_info":
-        info = []
-        
-        # Check if collection exists
-        try:
-            if not collection:
-                info.append("❌ ChromaDB collection is not initialized")
-            else:
-                count = collection.count()
-                info.append(f"✅ ChromaDB collection is initialized with {count} documents")
-        except Exception as e:
-            info.append(f"❌ Error accessing ChromaDB collection: {str(e)}")
-        
-        # Check OpenAI API key
-        if not OPENAI_API_KEY:
-            info.append("❌ OpenAI API key is not set in environment variables")
-        else:
-            info.append("✅ OpenAI API key is set")
-        
-        # Check PDF file
-        pdf_path = "./testing/ft_guide.pdf"
-        if os.path.exists(pdf_path):
-            info.append(f"✅ PDF file exists at {pdf_path}")
-        else:
-            info.append(f"❌ PDF file not found at {pdf_path}")
-        
-        return [TextContent(type="text", text="\n".join(info))]
-    
     else:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -216,26 +179,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 async def handle_list_resources() -> list[Resource]:
     """List all available document resources"""
     resources = []
-    
-    # Add known PDF resources
-    resources.append(
-        Resource(
-            uri="document://pdf/ft_guide",
-            name="Fine-tuning Guide",
-            description="OpenAI Fine-tuning Guide PDF",
-            mimeType="application/pdf"
-        )
-    )
-    
-    resources.append(
-        Resource(
-            uri="document://pdf/bert",
-            name="BERT Guide",
-            description="BERT Paper PDF",
-            mimeType="application/pdf"
-        )
-    )
-    
+
     # Find all available PDFs in testing directory
     try:
         pdf_files = glob.glob("./testing/*.pdf")
@@ -243,10 +187,6 @@ async def handle_list_resources() -> list[Resource]:
             filename = os.path.basename(pdf_path)
             name_without_ext = os.path.splitext(filename)[0]
             
-            # Skip PDFs we already explicitly added
-            if name_without_ext in ["ft_guide", "bert"]:
-                continue
-                
             resources.append(
                 Resource(
                     uri=f"document://pdf/{name_without_ext}",
@@ -258,104 +198,47 @@ async def handle_list_resources() -> list[Resource]:
     except Exception as e:
         logger.error(f"Error scanning for PDF files: {e}")
     
-    # Add chunk resources if we have a collection
-    if collection:
-        try:
-            # Add a few sample chunks as resources
-            chunks = collection.get(limit=10)
-            if chunks and 'ids' in chunks and chunks['ids']:
-                for i, chunk_id in enumerate(chunks['ids']):
-                    resources.append(
-                        Resource(
-                            uri=f"document://chunk/{chunk_id}",
-                            name=f"Document Chunk {chunk_id}",
-                            description=f"Document chunk from ChromaDB collection",
-                            mimeType="text/plain"
-                        )
-                    )
-        except Exception as e:
-            logger.error(f"Error getting chunks from collection: {e}")
-    
     return resources
 
 
 @server.read_resource()
 async def handle_read_resource(uri: str):
-    """Handle reading resources from various sources"""
+    """Handle reading PDF resources"""
     
     if not str(uri).startswith("document://"):
         raise ValueError(f"Unsupported URI scheme: {uri}")
     
     path_parts = str(uri).split("/")
-    if len(path_parts) < 3:
+    if len(path_parts) < 4:
         raise ValueError(f"Invalid URI format: {uri}")
     
-    resource_type = path_parts[2]  # pdf or chunk
-    
-    if resource_type == "pdf":
-        if len(path_parts) < 4:
-            raise ValueError(f"Missing document name in URI: {uri}")
-        
-        document_name = path_parts[3]
-        
-        try:            
-            # Construct path - assuming documents are in ./testing/
-            path = f"./testing/{document_name}"
-            if not path.endswith('.pdf'):
-                path += '.pdf'
-                
-            # Load the document
-            loader = PyPDFLoader(path)
-            pages = loader.load()
-            
-            # Combine all pages into one text with page markers
-            full_text = ""
-            for i, page in enumerate(pages):
-                full_text += f"\n\n--- Page {i+1} ---\n\n"
-                full_text += page.page_content
-            logger.info(f"Loaded document {document_name} with {len(pages)} pages. Preview: {full_text[:200]}...")
-            return full_text
-        except Exception as e:
-            error_message = f"Error loading document: {str(e)}"
-            logger.error(error_message)
-            return error_message
-    
-    elif resource_type == "chunk":
-        if len(path_parts) < 4:
-            raise ValueError(f"Missing chunk ID in URI: {uri}")
-        
-        chunk_id = path_parts[3]
-        
-        try:
-            if not collection:
-                return "Error: ChromaDB collection is not initialized."
-                
-            result = collection.get(ids=[chunk_id])
-            
-            if not result or not result['documents'] or len(result['documents']) == 0:
-                return f"Chunk with ID {chunk_id} not found."
-                
-            document = result['documents'][0]
-            metadata = result['metadatas'][0] if 'metadatas' in result and result['metadatas'] else {}
-            
-            output = "--- Chunk Details ---\n"
-            output += f"ID: {chunk_id}\n"
-            
-            if metadata:
-                for key, value in metadata.items():
-                    output += f"{key.capitalize()}: {value}\n"
-                    
-            output += "\n--- Content ---\n"
-            output += document
-            
-            return output
-        except Exception as e:
-            error_message = f"Error retrieving chunk: {str(e)}"
-            logger.error(error_message)
-            return error_message
-    
-    else:
+    resource_type = path_parts[2]
+    if resource_type != "pdf":
         raise ValueError(f"Unsupported resource type: {resource_type}")
+        
+    document_name = path_parts[3]
+    
+    try:            
+        # Construct path - assuming documents are in ./testing/
+        path = f"./testing/{document_name}"
+        if not path.endswith('.pdf'):
+            path += '.pdf'
+            
+        # Load the document
+        loader = PyPDFLoader(path)
+        pages = loader.load()
+        
+        # Combine all pages into one text with page markers
+        full_text = ""
+        for i, page in enumerate(pages):
+            full_text += f"\n\n--- Page {i+1} ---\n\n"
+            full_text += page.page_content
+        logger.info(f"Loaded document {document_name} with {len(pages)} pages. Preview: {full_text[:200]}...")
+        return full_text
+    except Exception as e:
+        error_message = f"Error loading document: {str(e)}"
+        logger.error(error_message)
+        return error_message
 
 
 @server.list_prompts()
@@ -431,23 +314,10 @@ Format your analysis in a well-structured manner with clear headings and concise
     
     elif name == "extract_key_information":
         # Get info_type with a fallback default
-        info_type = arguments.get("info_type", "definitions")
-        
-        info_instructions = {
-            "definitions": "Extract and explain all technical definitions, terminology, and concepts",
-            "people": "Extract all people, organizations, and entities mentioned with their relevance",
-            "statistics": "Extract all numerical data, statistics, and quantitative information",
-            "processes": "Extract all processes, procedures, workflows, and methodologies described",
-            "arguments": "Extract the main arguments, claims, and supporting evidence"
-        }
-        
-        instruction = info_instructions.get(
-            info_type.lower(),
-            f"Extract all {info_type} mentioned in the document"
-        )
+        info_type = arguments.get("info_type", "key information")
         
         return GetPromptResult(
-            description=f"Extracting {info_type} from document",
+            description=f"Extracting all mentions of {info_type} from document",
             messages=[
                 PromptMessage(
                     role="assistant", 
@@ -460,7 +330,7 @@ Format your analysis in a well-structured manner with clear headings and concise
                     role="user", 
                     content=TextContent(
                         type="text",
-                        text=f"""Based on the document section provided in the conversation, please {instruction}.
+                        text=f"""Based on the document section provided in the conversation, please extract all mentions of {info_type}.
 
 Format your response as a structured list with:
 1. Clear headers for each extracted element
@@ -468,7 +338,7 @@ Format your response as a structured list with:
 3. Brief explanations of significance where helpful
 4. Page or section references if available
 
-Be comprehensive but focus on quality over quantity.
+Be comprehensive but focus on quality over quantity. If no mention of the requested info_type is found, just return "No mentions of {info_type} found."
 """
                     )
                 )
