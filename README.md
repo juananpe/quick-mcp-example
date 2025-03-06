@@ -89,3 +89,5 @@ Our MCP Server will highlight tools, resources, and prompts. The core concept is
 <img src="./media/mcp_plan.png" width=600>
 
 The above diagram is what's implemented in [mcp_server.py](./mcp_server.py) with a corresponding simple CLI client in [client.py](./client.py).
+
+As a useful resource, check out [MCP's Server List](https://github.com/modelcontextprotocol/servers) for official integrations and community-made servers.
