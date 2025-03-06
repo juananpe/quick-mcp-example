@@ -238,7 +238,7 @@ class MCPClient:
         except Exception as e:
             error_msg = f"Error reading resource {uri}: {str(e)}"
             logger.error(error_msg)
-            await self.add_to_history("error", error_msg, {"uri": uri})
+            await self.add_to_history("user", error_msg, {"uri": uri, "error": True})
             return error_msg
 
     # ============================================================
@@ -315,6 +315,15 @@ class MCPClient:
                     "role": msg['role'],
                     "content": msg['content']
                 })
+            elif msg['role'] == 'tool' and 'tool' in msg.get('metadata', {}):
+                # Make sure we have the necessary fields for a tool message
+                if 'tool_call_id' in msg.get('metadata', {}):
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": msg['metadata']['tool_call_id'],
+                        "content": msg['content']
+                    })
+                # Otherwise, it's not properly formatted for OpenAI, so we skip it
         
         # Make sure we have the latest tools
         if not self.available_tools:
@@ -346,7 +355,7 @@ class MCPClient:
         except Exception as e:
             error_msg = f"Error calling OpenAI API: {str(e)}"
             logger.error(error_msg)
-            await self.add_to_history("error", error_msg)
+            await self.add_to_history("assistant", error_msg, {"error": True})
             return error_msg
 
         # Process response and handle tool calls
@@ -406,7 +415,7 @@ class MCPClient:
                         "tool_call_id": tool_call.id,
                         "content": tool_content
                     })
-                    await self.add_to_history("tool", tool_content[0].text, {"tool": tool_name, "args": tool_args})
+                    await self.add_to_history("tool", tool_content[0].text, {"tool": tool_name, "args": tool_args, "tool_call_id": tool_call.id})
                 
                 except Exception as e:
                     error_msg = f"Error executing tool {tool_name}: {str(e)}"
@@ -416,7 +425,7 @@ class MCPClient:
                         "tool_call_id": tool_call.id,
                         "content": error_msg
                     })
-                    await self.add_to_history("error", error_msg, {"tool": tool_name})
+                    await self.add_to_history("tool", error_msg, {"tool": tool_name, "error": True, "tool_call_id": tool_call.id})
                     final_text.append(f"\n[Error executing tool {tool_name}: {str(e)}]")
             
             if self.debug:
@@ -436,7 +445,7 @@ class MCPClient:
             except Exception as e:
                 error_msg = f"Error getting final response from OpenAI: {str(e)}"
                 logger.error(error_msg)
-                await self.add_to_history("error", error_msg)
+                await self.add_to_history("assistant", error_msg, {"error": True})
                 final_text.append(f"\n[Error: {error_msg}]")
 
         return "\n".join(final_text)
