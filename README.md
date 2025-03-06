@@ -12,7 +12,7 @@ The MCP ecosystem outlines three specific components:
 
 - **Hosts** provide: Frontend interfaces, surfacing of MCP functionality to users, integration points for the overall ecosystem
 
-This architecture creates a modular system where different components can be developed independently while maintaining interoperability. This let's users make MCP servers for different LLM related functionalities then plug and play across a variety of supported applications.
+This architecture creates a modular system where different components can be developed independently while maintaining interoperability. This let's users make MCP servers for different LLM related functionalities then plug and play across a variety of supported applications. Commonly used to integrate services APIs and tools, or connect to local datasources on your own machine.
 
 ## MCP Server Components
 
