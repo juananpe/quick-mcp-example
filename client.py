@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+# ============================================================
+# Dependencies
+# ============================================================
+
 import asyncio
 import json
 import logging
@@ -11,20 +14,32 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from openai import OpenAI
-from dotenv import load_dotenv
 
-# Configure logging
+# ============================================================
+# Logging
+# ============================================================
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("document-search-client")
 
-# Load environment variables
-load_dotenv()
+# Disable OpenAI and httpx loggers
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+# ============================================================
+# Environment Variables
+# ============================================================
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY is not set in environment variables")
     logger.warning("The client will not be able to process queries with AI")
 
+# ============================================================
+# MCP Client
+# ============================================================
 class MCPClient:
     def __init__(self, debug=False):
         """Initialize the MCP client.
@@ -32,29 +47,50 @@ class MCPClient:
         Args:
             debug: Whether to enable debug logging
         """
+        # ============================================================
         # Initialize session and client objects
+        # ============================================================
+
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
         self.debug = debug
         
+        # ============================================================
         # Message history tracking
+        # ============================================================
+
         self.message_history = []
         
-        # Initialize OpenAI client if API key is available
+        # ============================================================
+        # Main System Prompt
+        # ============================================================
+
+        self.system_prompt = "You are a helpful RAG AI assistant named 'RAG-AI-MCP' that can answer questions about the provided documents or query the attached database for more information."
+
+        # ============================================================
+        # Initialize OpenAI Client
+        # ============================================================
         try:
             self.openai = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
             if not self.openai:
                 logger.warning("OpenAI client not initialized - missing API key")
+        
         except Exception as e:
             logger.error(f"Error initializing OpenAI client: {e}")
             self.openai = None
         
+        # ============================================================
         # Server connection info
+        # ============================================================
+
         self.available_tools = []
         self.available_resources = []
         self.available_prompts = []
         self.server_name = None
 
+    # ============================================================
+    # Connect to MCP Server
+    # ============================================================
     async def connect_to_server(self, server_script_path: str):
         """Connect to an MCP server
         
@@ -64,18 +100,19 @@ class MCPClient:
         if self.debug:
             logger.info(f"Connecting to server at {server_script_path}")
             
+        # Check for existing Python script
         is_python = server_script_path.endswith('.py')
-        is_js = server_script_path.endswith('.js')
-        if not (is_python or is_js):
-            raise ValueError("Server script must be a .py or .js file")
-            
-        command = "python" if is_python else "node"
+        if not (is_python):
+            raise ValueError("Server script must be a .py file")
+
+        # Initialize server parameters
         server_params = StdioServerParameters(
-            command=command,
+            command="python",
             args=[server_script_path],
             env=None
         )
-        
+
+        # Initialize stdio transport
         try:
             stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
             self.stdio, self.write = stdio_transport
@@ -92,10 +129,14 @@ class MCPClient:
             await self.refresh_capabilities()
             
             return True
+        
         except Exception as e:
             logger.error(f"Failed to connect to server: {e}")
             return False
     
+    # ============================================================
+    # Refresh Server Capabilities
+    # ============================================================
     async def refresh_capabilities(self):
         """Refresh the client's knowledge of server capabilities"""
         if not self.session:
@@ -119,6 +160,9 @@ class MCPClient:
             logger.info(f"- Resources: {len(self.available_resources)}")
             logger.info(f"- Prompts: {len(self.available_prompts)}")
 
+    # ============================================================
+    # Handling Message History Helper Function
+    # ============================================================
     async def add_to_history(self, role: str, content: str, metadata: Dict[str, Any] = None):
         """Add a message to the history
         
@@ -127,17 +171,24 @@ class MCPClient:
             content: The message content
             metadata: Optional metadata about the message
         """
+        
+        # Format message
         message = {
             "role": role,
             "content": content,
             "timestamp": asyncio.get_event_loop().time(),
             "metadata": metadata or {}
         }
+
+        # Add message to history
         self.message_history.append(message)
         
         if self.debug:
             logger.info(f"Added message to history: {role} - {content[:100]}...")
 
+    # ============================================================
+    # List Available Resources from the MCP Server
+    # ============================================================
     async def list_resources(self):
         """List available resources from the MCP server"""
         if not self.session:
@@ -152,6 +203,9 @@ class MCPClient:
         
         return self.available_resources
 
+    # ============================================================
+    # Read Content from a Resource and Add to Message History
+    # ============================================================
     async def read_resource(self, uri: str):
         """Read content from a specific resource
         
@@ -161,19 +215,18 @@ class MCPClient:
         Returns:
             The content of the resource as a string
         """
-        if not self.session:
-            raise ValueError("Not connected to server")
             
         if self.debug:
             logger.info(f"Reading resource: {uri}")
             
         try:
+            # Read resource content
             result = await self.session.read_resource(uri)
             
+            # Check if resource content is found
             if not result:
                 content = "No content found for this resource."
             else:
-                # Handle both string and object responses
                 content = result if isinstance(result, str) else str(result)
             
             # Add resource content to history as a user message
@@ -181,18 +234,20 @@ class MCPClient:
             await self.add_to_history("user", resource_message, {"resource_uri": uri})
             
             return content
+        
         except Exception as e:
             error_msg = f"Error reading resource {uri}: {str(e)}"
             logger.error(error_msg)
             await self.add_to_history("error", error_msg, {"uri": uri})
             return error_msg
 
-            
+    # ============================================================
+    # List Available Prompts from the MCP Server
+    # ============================================================
     async def list_prompts(self):
         """List available prompts from the MCP server"""
-        if not self.session:
-            raise ValueError("Not connected to server")
-            
+        
+        # Get available prompts
         response = await self.session.list_prompts()
         self.available_prompts = response.prompts
         
@@ -202,6 +257,9 @@ class MCPClient:
         
         return self.available_prompts
 
+    # ============================================================
+    # Get a Specific Prompt with Arguments
+    # ============================================================
     async def get_prompt(self, name: str, arguments: dict = None):
         """Get a specific prompt with arguments
         
@@ -212,13 +270,12 @@ class MCPClient:
         Returns:
             The prompt result
         """
-        if not self.session:
-            raise ValueError("Not connected to server")
             
         if self.debug:
             logger.info(f"Getting prompt: {name} with arguments: {arguments}")
             
         try:
+            # Get the prompt
             prompt_result = await self.session.get_prompt(name, arguments)
             return prompt_result
         except Exception as e:
@@ -226,6 +283,9 @@ class MCPClient:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
+    # ============================================================
+    # Process a Query using OpenAI and Available Tools
+    # ============================================================
     async def process_query(self, query: str) -> str:
         """Process a query using OpenAI and available tools
         
@@ -235,28 +295,32 @@ class MCPClient:
         Returns:
             The response from the AI after processing the query
         """
-        if not self.openai:
-            error_msg = "OpenAI client not initialized. Please set OPENAI_API_KEY environment variable."
-            await self.add_to_history("error", error_msg)
-            return error_msg
             
         # Add user query to history
         await self.add_to_history("user", query)
         
         # Convert message history to OpenAI format
         messages = []
+        
+        # Always include the current system prompt first
+        messages.append({
+            "role": "system",
+            "content": self.system_prompt
+        })
+        
+        # Add the rest of the message history
         for msg in self.message_history:
-            if msg['role'] in ['user', 'assistant', 'system']:
+            if msg['role'] in ['user', 'assistant']:
                 messages.append({
                     "role": msg['role'],
                     "content": msg['content']
                 })
-            # Skip other message types in the OpenAI context
         
         # Make sure we have the latest tools
         if not self.available_tools:
             await self.refresh_capabilities()
 
+        # Format tools for OpenAI
         available_tools = [{ 
             "type": "function",
             "function": {
@@ -296,6 +360,7 @@ class MCPClient:
         await self.add_to_history("assistant", initial_response)
         final_text.append(initial_response)
         
+        # Check if tool calls are present
         if assistant_message.tool_calls:
             if self.debug:
                 logger.info(f"Tool calls requested: {len(assistant_message.tool_calls)}")
@@ -324,7 +389,7 @@ class MCPClient:
                     logger.info(f"Executing tool: {tool_name}")
                     logger.info(f"Arguments: {tool_args}")
                 
-                # Execute tool call
+                # Execute tool call on the server
                 try:
                     result = await self.session.call_tool(tool_name, tool_args)
                     tool_content = result.content if hasattr(result, 'content') else str(result)
@@ -342,6 +407,7 @@ class MCPClient:
                         "content": tool_content
                     })
                     await self.add_to_history("tool", tool_content[0].text, {"tool": tool_name, "args": tool_args})
+                
                 except Exception as e:
                     error_msg = f"Error executing tool {tool_name}: {str(e)}"
                     logger.error(error_msg)
@@ -366,6 +432,7 @@ class MCPClient:
                 response_content = second_response.choices[0].message.content or ""
                 await self.add_to_history("assistant", response_content)
                 final_text.append("\n" + response_content)
+
             except Exception as e:
                 error_msg = f"Error getting final response from OpenAI: {str(e)}"
                 logger.error(error_msg)
@@ -374,10 +441,13 @@ class MCPClient:
 
         return "\n".join(final_text)
 
+    # ============================================================
+    # Main Chat Loop
+    # ============================================================
     async def chat_loop(self):
-        """Run an interactive chat loop with support for resources and prompts"""
+        """Welcome to the RAG-AI-MCP Client!"""
         print(f"\n{'='*50}")
-        print(f"MCP Client Connected to: {self.server_name}")
+        print(f"RAG-AI-MCP Client Connected to: {self.server_name}")
         print(f"{'='*50}")
         print("Type your queries or use these commands:")
         print("  /debug - Toggle debug mode")
@@ -385,26 +455,34 @@ class MCPClient:
         print("  /resources - List available resources")
         print("  /resource <uri> - Read a specific resource")
         print("  /prompts - List available prompts")
-        print("  /prompt <n> <sentence> - Use a specific prompt with a sentence as the argument")
+        print("  /prompt <name> <argument> - Use a specific prompt with a string as the argument")
         print("  /tools - List available tools")
         print("  /quit - Exit the client")
         print(f"{'='*50}")
         
+        # Main chat loop
         while True:
             try:
+                # Get user query
                 query = input("\nQuery: ").strip()
                 
                 # Handle commands
                 if query.lower() == '/quit':
                     break
+
+                # Toggle debug mode
                 elif query.lower() == '/debug':
                     self.debug = not self.debug
                     print(f"\nDebug mode {'enabled' if self.debug else 'disabled'}")
                     continue
+
+                # Refresh server capabilities
                 elif query.lower() == '/refresh':
                     await self.refresh_capabilities()
                     print("\nServer capabilities refreshed")
                     continue
+
+                # List available resources
                 elif query.lower() == '/resources':
                     resources = await self.list_resources()
                     print("\nAvailable Resources:")
@@ -413,6 +491,8 @@ class MCPClient:
                         if res.description:
                             print(f"    {res.description}")
                     continue
+
+                # Read content from a resource
                 elif query.lower().startswith('/resource '):
                     uri = query[10:].strip()
                     print(f"\nFetching resource: {uri}")
@@ -426,6 +506,8 @@ class MCPClient:
                     else:
                         print(content)
                     continue
+
+                # List available prompts
                 elif query.lower() == '/prompts':
                     prompts = await self.list_prompts()
                     print("\nAvailable Prompts:")
@@ -436,13 +518,16 @@ class MCPClient:
                         if prompt.arguments:
                             print(f"    Arguments: {', '.join(arg.name for arg in prompt.arguments)}")
                     continue
+
+                # Run a specific prompt with arguments
                 elif query.lower().startswith('/prompt '):
+                    
                     # Parse: /prompt name sentence of arguments
                     parts = query[8:].strip().split(maxsplit=1)
                     if not parts:
                         print("Error: Prompt name required")
                         continue
-                        
+                    
                     name = parts[0]
                     arguments = {}
                     
@@ -498,7 +583,8 @@ class MCPClient:
                             "content": content
                         })
                     
-                    print("Sending prompt to OpenAI...")
+                    print("Processing prompt...")
+
                     try:
                         response = self.openai.chat.completions.create(
                             model="gpt-4o",
@@ -515,10 +601,13 @@ class MCPClient:
                         
                         print("\nResponse:")
                         print(response_content)
+                    
                     except Exception as e:
                         error_msg = f"\nError processing prompt with OpenAI: {str(e)}"
                         print(error_msg)
                     continue
+                
+                # List available tools
                 elif query.lower() == '/tools':
                     print("\nAvailable Tools:")
                     for tool in self.available_tools:
@@ -538,34 +627,47 @@ class MCPClient:
                     import traceback
                     traceback.print_exc()
     
+    # ============================================================
+    # Resource Cleanup
+    # ============================================================  
     async def cleanup(self):
         """Clean up resources"""
         if self.debug:
             logger.info("Cleaning up client resources")
         await self.exit_stack.aclose()
 
+# ============================================================
+# Main Function
+# ============================================================
 async def main():
     """Run the MCP client"""
+
+    # Check for server script path
     if len(sys.argv) < 2:
         print("Usage: python client.py <path_to_server_script>")
         sys.exit(1)
-        
+    
+    # Initialize client
     server_script = sys.argv[1]
     client = MCPClient()
     
+    # Connect to server
     try:
         connected = await client.connect_to_server(server_script)
         if not connected:
             print(f"Failed to connect to server at {server_script}")
             sys.exit(1)
             
+        # Start chat loop
         await client.chat_loop()
-    except KeyboardInterrupt:
-        print("\nClient terminated by user")
+    
+    # Handle other exceptions
     except Exception as e:
         print(f"Error: {str(e)}")
         import traceback
         traceback.print_exc()
+        
+    # Cleanup resources
     finally:
         await client.cleanup()
 

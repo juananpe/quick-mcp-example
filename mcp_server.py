@@ -1,6 +1,10 @@
+# ============================================================
+# Dependencies
+# ============================================================
+
 import os
 import logging
-from dotenv import load_dotenv
+import dotenv
 from mcp.types import (
     Resource,
     Tool,
@@ -19,24 +23,33 @@ import chromadb
 from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 import glob
 from importlib import metadata
-import time
-import re
-
 from langchain_community.document_loaders import PyPDFLoader
 
+# ============================================================
+# Logging
+# ============================================================
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("document-search-mcp")
 
-# Load environment variables
-load_dotenv()
+# ============================================================
+# Environment Variables
+# ============================================================
+
+# Load environment variables from .env file
+dotenv.load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# ============================================================
 # Initialize server
+# ============================================================
+
 server = Server("document-search")
 
+# ============================================================
 # Initialize ChromaDB client
+# ============================================================
+
 client = None
 embedding_function = None
 collection = None
@@ -64,7 +77,9 @@ try:
 except Exception as e:
     logger.error(f"Error initializing components: {e}")
 
-
+# ============================================================
+# Format search result helper function for query_document tool
+# ============================================================
 def format_search_result(document: str, distance: float, metadata: dict[str, object] = None) -> str:
     """Format a search result into a readable string."""
     result = f"Score: {1 - distance:.4f} (closer to 1 is better)\n"
@@ -76,7 +91,9 @@ def format_search_result(document: str, distance: float, metadata: dict[str, obj
     result += f"Content: {document}"
     return result
 
-
+# ============================================================
+# List available tools in the server
+# ============================================================
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
     """List available tools in the server."""
@@ -109,7 +126,9 @@ async def handle_list_tools() -> list[Tool]:
         ),
     ]
 
-
+# ============================================================
+# Handle tool execution requests
+# ============================================================
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None) -> list[TextContent | ImageContent | EmbeddedResource]:
     """Handle tool execution requests."""
@@ -174,7 +193,9 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
     else:
         raise ValueError(f"Unknown tool: {name}")
 
-
+# ============================================================
+# List available resources in the server
+# ============================================================
 @server.list_resources()
 async def handle_list_resources() -> list[Resource]:
     """List all available document resources"""
@@ -200,7 +221,9 @@ async def handle_list_resources() -> list[Resource]:
     
     return resources
 
-
+# ============================================================
+# Handle reading PDF resources
+# ============================================================
 @server.read_resource()
 async def handle_read_resource(uri: str):
     """Handle reading PDF resources"""
@@ -240,7 +263,9 @@ async def handle_read_resource(uri: str):
         logger.error(error_message)
         return error_message
 
-
+# ============================================================
+# List available prompts in the server
+# ============================================================
 @server.list_prompts()
 async def handle_list_prompts() -> list[Prompt]:
     """List available prompts from the server"""
@@ -269,7 +294,9 @@ async def handle_list_prompts() -> list[Prompt]:
         )
     ]
 
-
+# ============================================================
+# Handle prompt execution requests
+# ============================================================
 @server.get_prompt()
 async def handle_get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:
     """Generate a prompt based on the requested type"""
@@ -349,6 +376,9 @@ Be comprehensive but focus on quality over quantity. If no mention of the reques
         raise ValueError(f"Unknown prompt: {name}")
 
 
+# ============================================================
+# Run the MCP server using stdin/stdout streams
+# ============================================================   
 async def main():
     """Run the MCP server using stdin/stdout streams"""
     # Get the distribution info for versioning
@@ -372,6 +402,9 @@ async def main():
             ),
         )
 
+# ============================================================
+# Main Function
+# ============================================================
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
