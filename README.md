@@ -91,3 +91,34 @@ Our MCP Server will highlight tools, resources, and prompts. The core concept is
 The above diagram is what's implemented in [mcp_server.py](./mcp_server.py) with a corresponding simple CLI client in [client.py](./client.py).
 
 As a useful resource, check out [MCP's Server List](https://github.com/modelcontextprotocol/servers) for official integrations and community-made servers.
+
+---
+# Setup and Installation
+
+1. Clone the Repo
+```
+git clone https://github.com/ALucek/quick-mcp-example.git
+cd quick-mcp-example
+```
+
+2. Create the ChromaDB Database
+
+Follow the instructions in [MCP_setup.ipynb](./MCP_setup.ipynb) to create the vector database and embed a pdf into it.
+
+3. Create the Virtual Environment and Install Packages
+```
+# Using uv (recommended)
+uv venv
+source .venv/bin/activate  # On macOS/Linux
+# OR
+.venv\Scripts\activate     # On Windows
+
+# Install dependencies
+uv sync
+```
+
+4. Run the Client & Server
+
+```
+python client.py mcp_server.py
+```
