@@ -231,7 +231,7 @@ class MCPClient:
             
             # Add resource content to history as a user message
             resource_message = f"Resource content from {uri}:\n\n{content}"
-            await self.add_to_history("user", resource_message, {"resource_uri": uri})
+            await self.add_to_history("user", resource_message, {"resource_uri": uri, "is_resource": True})
             
             return content
         
@@ -308,22 +308,87 @@ class MCPClient:
             "content": self.system_prompt
         })
         
-        # Add the rest of the message history
-        for msg in self.message_history:
-            if msg['role'] in ['user', 'assistant']:
+        # We need to properly maintain the tool call sequence
+        # This means ensuring every 'tool' message follows an 'assistant' message with tool_calls
+        assistant_with_tool_calls = None
+        pending_tool_responses = []
+        
+        # Track message indices to help with debugging
+        for i, msg in enumerate(self.message_history):
+            # Handle different message types
+            if msg['role'] == 'user':
+                # First flush any pending tool responses if needed
+                if assistant_with_tool_calls and pending_tool_responses:
+                    messages.append(assistant_with_tool_calls)
+                    messages.extend(pending_tool_responses)
+                    assistant_with_tool_calls = None
+                    pending_tool_responses = []
+                
+                # Then add the user message
                 messages.append({
-                    "role": msg['role'],
+                    "role": "user",
                     "content": msg['content']
                 })
-            elif msg['role'] == 'tool' and 'tool' in msg.get('metadata', {}):
-                # Make sure we have the necessary fields for a tool message
-                if 'tool_call_id' in msg.get('metadata', {}):
+            
+            elif msg['role'] == 'assistant':
+                # Check if this is an assistant message with tool calls
+                metadata = msg.get('metadata', {})
+                if metadata.get('has_tool_calls', False):
+                    # If we already have a pending assistant with tool calls, flush it
+                    if assistant_with_tool_calls:
+                        messages.append(assistant_with_tool_calls)
+                        messages.extend(pending_tool_responses)
+                        pending_tool_responses = []
+                    
+                    # Store this assistant message for later (until we collect all tool responses)
+                    assistant_with_tool_calls = {
+                        "role": "assistant",
+                        "content": msg['content'],
+                        "tool_calls": metadata.get('tool_calls', [])
+                    }
+                else:
+                    # Regular assistant message without tool calls
+                    # First flush any pending tool calls
+                    if assistant_with_tool_calls:
+                        messages.append(assistant_with_tool_calls)
+                        messages.extend(pending_tool_responses)
+                        assistant_with_tool_calls = None
+                        pending_tool_responses = []
+                    
+                    # Then add the regular assistant message
                     messages.append({
+                        "role": "assistant",
+                        "content": msg['content']
+                    })
+            
+            elif msg['role'] == 'tool' and 'tool_call_id' in msg.get('metadata', {}):
+                # Collect tool responses
+                if assistant_with_tool_calls:  # Only add if we have a preceding assistant message with tool calls
+                    pending_tool_responses.append({
                         "role": "tool",
                         "tool_call_id": msg['metadata']['tool_call_id'],
                         "content": msg['content']
                     })
-                # Otherwise, it's not properly formatted for OpenAI, so we skip it
+            
+            elif msg['role'] == 'system':
+                # System messages can be added directly
+                messages.append({
+                    "role": "system",
+                    "content": msg['content']
+                })
+        
+        # Flush any remaining pending tool calls at the end
+        if assistant_with_tool_calls:
+            messages.append(assistant_with_tool_calls)
+            messages.extend(pending_tool_responses)
+        
+        if self.debug:
+            logger.info(f"Prepared {len(messages)} messages for OpenAI")
+            for i, msg in enumerate(messages):
+                role = msg['role']
+                has_tool_calls = 'tool_calls' in msg
+                preview = msg['content'][:50] + "..." if msg['content'] else ""
+                logger.info(f"Message {i}: {role} {'with tool_calls' if has_tool_calls else ''} - {preview}")
         
         # Make sure we have the latest tools
         if not self.available_tools:
@@ -365,8 +430,15 @@ class MCPClient:
         assistant_message = response.choices[0].message
         initial_response = assistant_message.content or ""
         
-        # Add initial assistant response to history
-        await self.add_to_history("assistant", initial_response)
+        # Add initial assistant response to history with metadata about tool calls
+        tool_calls_metadata = {}
+        if assistant_message.tool_calls:
+            tool_calls_metadata = {
+                "has_tool_calls": True,
+                "tool_calls": assistant_message.tool_calls
+            }
+        
+        await self.add_to_history("assistant", initial_response, tool_calls_metadata)
         final_text.append(initial_response)
         
         # Check if tool calls are present
@@ -413,7 +485,7 @@ class MCPClient:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": tool_content
+                        "content": tool_content[0].text
                     })
                     await self.add_to_history("tool", tool_content[0].text, {"tool": tool_name, "args": tool_args, "tool_call_id": tool_call.id})
                 
