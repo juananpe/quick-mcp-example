@@ -1,6 +1,6 @@
 # Standardizing LLM Interaction with MCP Servers
 
-Model Context Protocol, or MCP, is [an open protocol that standardizes how applications provide context to LLMs](https://modelcontextprotocol.io/introduction). In other words it provides a unified framework for LLM based applications to connect to get context, use tools, and execute standard prompts.
+Model Context Protocol, or MCP, is [an open protocol that standardizes how applications provide context to LLMs](https://modelcontextprotocol.io/introduction). In other words it provides a unified framework for LLM based applications to connect to connect to data sources, get context, use tools, and execute standard prompts.
 
 <img src="./media/mcp_arch.png" width=600>
 
